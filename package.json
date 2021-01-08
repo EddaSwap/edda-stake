@@ -1,0 +1,30 @@
+{
+  "name": "edda-stake",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "compile": "truffle compile",
+    "deploy": "[ \"$NODE_ENV\" != \"truffle\" ] && NETWORK=\"--network ${NODE_ENV}\"; truffle migrate ${NETWORK}",
+    "exec": "[ \"$NODE_ENV\" != \"truffle\" ] && NETWORK=\"--network ${NODE_ENV}\"; truffle exec ${NETWORK}",
+    "test": "npm run test:js",
+    "test:js": "[ \"$NODE_ENV\" != \"truffle\" ] && NETWORK=\"--network ${NODE_ENV}\"; echo \"NETWORK=[${NETWORK}]\"; truffle test ${NETWORK}",
+    "truffle": "[ \"$NODE_ENV\" != \"truffle\" ] && NETWORK=\"--network ${NODE_ENV}\"; truffle ${NETWORK}",
+    "ganache-cli": "ganache-cli.sh",
+    "merge-contracts": "sol-merger \"./contracts/*.sol\" ./audit"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@openzeppelin/contracts": "^3.3.0",
+    "@openzeppelin/test-helpers": "^0.5.9",
+    "dotenv-flow": "^3.2.0",
+    "ganache-cli": "^6.12.1",
+    "prettier": "^2.2.0",
+    "prettier-plugin-solidity": "^1.0.0-beta.1",
+    "sol-merger": "^3.1.0",
+    "truffle": "^5.1.54",
+    "truffle-hdwallet-provider": "^1.0.17",
+    "yargs": "^16.1.1"
+  }
+}

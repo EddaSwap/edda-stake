@@ -8,17 +8,19 @@ import "@openzeppelin/contracts/GSN/Context.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 
 import "./IRewardDistributionRecipient.sol";
 import "./LPTokenWrapper.sol";
 
-contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
+contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient, ReentrancyGuard {
   IERC20 public outToken;
 
   uint256 public constant DURATION = 7 days;
   uint256 public stakeDurationSeconds = 3 days;
   uint256 public constant MIN_STAKE_DURATION_SECONDS = 2 minutes;
+  uint256 public constant REWARD_DELAY_SECONDS = 1 minutes;
 
   uint256 public periodFinish = 0;
   uint256 public rewardRate = 0;
@@ -27,6 +29,7 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
   mapping(address => uint256) public userRewardPerTokenPaid;
   mapping(address => uint256) public rewards;
   mapping(address => uint256) public canWithdrawTime;
+  mapping(address => uint256) public canGetRewardTime;
 
   event RewardAdded(uint256 reward);
   event Staked(address indexed user, uint256 amount);
@@ -74,26 +77,29 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
       balanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
   }
 
-  function stake(uint256 amount) public override updateReward(msg.sender) {
+  function stake(uint256 amount) public override nonReentrant updateReward(msg.sender) {
     require(amount > 0, "Cannot stake 0");
     canWithdrawTime[msg.sender] = now + stakeDurationSeconds;
+    canGetRewardTime[msg.sender] = now + REWARD_DELAY_SECONDS;
     emit Staked(msg.sender, amount);
     super.stake(amount);
   }
 
-  function withdraw(uint256 amount) public override updateReward(msg.sender) {
+  function withdraw(uint256 amount) public override nonReentrant updateReward(msg.sender) {
     require(amount > 0, "Cannot withdraw 0");
     require(now > canWithdrawTime[msg.sender], "The mortgage will take some time to redeem");
     emit Withdrawn(msg.sender, amount);
     super.withdraw(amount);
   }
 
+  // Is not `nonReentrant` because of calls have this modifier.
   function exit() external {
     withdraw(balanceOf(msg.sender));
     getReward();
   }
 
-  function getReward() public updateReward(msg.sender) {
+  function getReward() public nonReentrant updateReward(msg.sender) {
+    require(now > canGetRewardTime[msg.sender], "Delay after Stake is required");
     uint256 reward = earned(msg.sender);
     if (reward > 0) {
       rewards[msg.sender] = 0;
@@ -102,7 +108,13 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
     }
   }
 
-  function notifyRewardAmount(uint256 reward) external override onlyRewardDistribution updateReward(address(0)) {
+  function notifyRewardAmount(uint256 reward)
+    external
+    override
+    nonReentrant
+    onlyRewardDistribution
+    updateReward(address(0))
+  {
     if (block.timestamp >= periodFinish) {
       rewardRate = reward.div(DURATION);
     } else {

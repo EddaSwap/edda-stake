@@ -514,6 +514,66 @@ library Address {
 
 // SPDX-License-Identifier: MIT
 /**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+abstract contract ReentrancyGuard {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
+
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    uint256 private _status;
+
+    constructor () internal {
+        _status = _NOT_ENTERED;
+    }
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+}
+
+// SPDX-License-Identifier: MIT
+/**
  * @title SafeERC20
  * @dev Wrappers around ERC20 operations that throw on failure (when the token
  * contract returns false). Tokens that return no value (and instead revert or
@@ -633,12 +693,13 @@ contract LPTokenWrapper {
 }
 
 // File: @openzeppelin/contracts/math/Math.sol
-contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
+contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient, ReentrancyGuard {
   IERC20 public outToken;
 
   uint256 public constant DURATION = 7 days;
   uint256 public stakeDurationSeconds = 3 days;
   uint256 public constant MIN_STAKE_DURATION_SECONDS = 2 minutes;
+  uint256 public constant REWARD_DELAY_SECONDS = 1 minutes;
 
   uint256 public periodFinish = 0;
   uint256 public rewardRate = 0;
@@ -647,6 +708,7 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
   mapping(address => uint256) public userRewardPerTokenPaid;
   mapping(address => uint256) public rewards;
   mapping(address => uint256) public canWithdrawTime;
+  mapping(address => uint256) public canGetRewardTime;
 
   event RewardAdded(uint256 reward);
   event Staked(address indexed user, uint256 amount);
@@ -694,26 +756,29 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
       balanceOf(account).mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
   }
 
-  function stake(uint256 amount) public override updateReward(msg.sender) {
+  function stake(uint256 amount) public override nonReentrant updateReward(msg.sender) {
     require(amount > 0, "Cannot stake 0");
     canWithdrawTime[msg.sender] = now + stakeDurationSeconds;
+    canGetRewardTime[msg.sender] = now + REWARD_DELAY_SECONDS;
     emit Staked(msg.sender, amount);
     super.stake(amount);
   }
 
-  function withdraw(uint256 amount) public override updateReward(msg.sender) {
+  function withdraw(uint256 amount) public override nonReentrant updateReward(msg.sender) {
     require(amount > 0, "Cannot withdraw 0");
     require(now > canWithdrawTime[msg.sender], "The mortgage will take some time to redeem");
     emit Withdrawn(msg.sender, amount);
     super.withdraw(amount);
   }
 
+  // Is not `nonReentrant` because of calls have this modifier.
   function exit() external {
     withdraw(balanceOf(msg.sender));
     getReward();
   }
 
-  function getReward() public updateReward(msg.sender) {
+  function getReward() public nonReentrant updateReward(msg.sender) {
+    require(now > canGetRewardTime[msg.sender], "Delay after Stake is required");
     uint256 reward = earned(msg.sender);
     if (reward > 0) {
       rewards[msg.sender] = 0;
@@ -722,7 +787,13 @@ contract RewardsPool is LPTokenWrapper, IRewardDistributionRecipient {
     }
   }
 
-  function notifyRewardAmount(uint256 reward) external override onlyRewardDistribution updateReward(address(0)) {
+  function notifyRewardAmount(uint256 reward)
+    external
+    override
+    nonReentrant
+    onlyRewardDistribution
+    updateReward(address(0))
+  {
     if (block.timestamp >= periodFinish) {
       rewardRate = reward.div(DURATION);
     } else {
